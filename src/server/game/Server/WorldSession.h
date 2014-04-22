@@ -143,7 +143,7 @@ public:
 
     virtual bool Process(WorldPacket* /*packet*/) { return true; }
     virtual bool ProcessLogout() const { return true; }
-    static Opcodes DropHighBytes(Opcodes opcode) { return Opcodes(opcode & 0xFFFF); }
+    static uint16 DropHighBytes(uint16 opcode) { return opcode & NUM_OPCODE_HANDLERS; }
 
 protected:
     WorldSession* const m_pSession;
@@ -618,7 +618,8 @@ class WorldSession
         void HandleStableSwapPet(WorldPacket& recvPacket);
         void HandleStableSwapPetCallback(PreparedQueryResult result, uint32 petId);
         void SendTrainerBuyFailed(uint64 guid, uint32 spellId, uint32 reason);
-
+        
+        void HandleDuelProposedOpcode(WorldPacket& recvPacket);
         void HandleDuelAcceptedOpcode(WorldPacket& recvPacket);
         void HandleDuelCancelledOpcode(WorldPacket& recvPacket);
 

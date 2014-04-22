@@ -1021,7 +1021,7 @@ bool Player::Create(uint32 guidlow, CharacterCreateInfo* createInfo)
     SetUInt32Value(PLAYER_FIELD_GUILD_RANK_ID, 0);
     SetGuildLevel(0);
     SetUInt32Value(PLAYER_FIELD_GUILD_DELETE_DATE, 0);
-    SetUInt32Value(PLAYER_FIELD_VIRTUAL_PLAYER_REALM, sConfigMgr->GetIntDefault("RealmID", 0));
+    SetUInt32Value(PLAYER_FIELD_VIRTUAL_PLAYER_REALM, realmID);
 
     for (int i = 0; i < KNOWN_TITLES_SIZE; ++i)
         SetUInt64Value(PLAYER_FIELD_KNOWN_TITLES + i, 0);  // 0=disabled
@@ -5839,17 +5839,17 @@ void Player::GetDodgeFromAgility(float &diminishing, float &nondiminishing)
     // Table for base dodge values
     const float dodge_base[MAX_CLASSES] =
     {
-         0.037580f, // Warrior
-         0.036520f, // Paladin
-        -0.054500f, // Hunter
-        -0.005900f, // Rogue
-         0.031830f, // Priest
-         0.036640f, // DK
-         0.016750f, // Shaman
-         0.034575f, // Mage
-         0.020350f, // Warlock
-         0.0f,      // ??
-         0.049510f  // Druid
+         3.7580f, // Warrior
+         3.6520f, // Paladin
+        -5.4500f, // Hunter
+        -0.5900f, // Rogue
+         3.1830f, // Priest
+         3.6640f, // DK
+         1.6750f, // Shaman
+         3.4575f, // Mage
+         2.0350f, // Warlock
+         5.6097f, // Monk
+         4.9510f  // Druid
     };
     // Crit/agility to dodge/agility coefficient multipliers; 3.2.0 increased required agility by 15%
     const float crit_to_dodge[MAX_CLASSES] =
@@ -5863,7 +5863,7 @@ void Player::GetDodgeFromAgility(float &diminishing, float &nondiminishing)
          1.60f/1.15f,    // Shaman
          1.00f/1.15f,    // Mage
          0.97f/1.15f,    // Warlock (?)
-         0.0f,           // ??
+         2.00f/1.15f,    // Monk
          2.00f/1.15f     // Druid
     };
 
@@ -5874,17 +5874,21 @@ void Player::GetDodgeFromAgility(float &diminishing, float &nondiminishing)
         level = GT_MAX_LEVEL;
 
     // Dodge per agility is proportional to crit per agility, which is available from DBC files
-    GtChanceToMeleeCritEntry  const* dodgeRatio = sGtChanceToMeleeCritStore.LookupEntry((pclass-1)*GT_MAX_LEVEL + level-1);
+    GtChanceToMeleeCritEntry const* dodgeRatio = sGtChanceToMeleeCritStore.LookupEntry((pclass-1)*GT_MAX_LEVEL + (level - 1));
     if (dodgeRatio == NULL || pclass > MAX_CLASSES)
         return;
 
-    /// @todo research if talents/effects that increase total agility by x% should increase non-diminishing part
+    // TODO: research if talents/effects that increase total agility by x% should increase non-diminishing part
     float base_agility = GetCreateStat(STAT_AGILITY) * m_auraModifiersGroup[UNIT_MOD_STAT_START + STAT_AGILITY][BASE_PCT];
     float bonus_agility = GetStat(STAT_AGILITY) - base_agility;
 
+    float dodge_ratio = 1 / dodgeRatio->ratio;
+    if(pclass == CLASS_DEATH_KNIGHT || pclass == CLASS_PALADIN || pclass == CLASS_WARRIOR) dodge_ratio = 0;
+
     // calculate diminishing (green in char screen) and non-diminishing (white) contribution
-    diminishing = 100.0f * bonus_agility * dodgeRatio->ratio * crit_to_dodge[pclass-1];
-    nondiminishing = 100.0f * (dodge_base[pclass-1] + base_agility * dodgeRatio->ratio * crit_to_dodge[pclass-1]);
+    diminishing = bonus_agility * dodge_ratio * crit_to_dodge[pclass-1];
+    nondiminishing = dodge_base[pclass-1] + base_agility * dodge_ratio * crit_to_dodge[pclass-1];
+
 }
 
 float Player::GetSpellCritFromIntellect()
@@ -17409,7 +17413,7 @@ bool Player::LoadFromDB(uint32 guid, SQLQueryHolder *holder)
     SetByteValue(PLAYER_FIELD_ARENA_FACTION, 1, fields[45].GetUInt8());
     SetUInt32Value(PLAYER_FIELD_PLAYER_FLAGS, fields[11].GetUInt32());
     SetInt32Value(PLAYER_FIELD_WATCHED_FACTION_INDEX, fields[44].GetUInt32());
-    SetUInt32Value(PLAYER_FIELD_VIRTUAL_PLAYER_REALM, sConfigMgr->GetIntDefault("RealmID", 0));
+    SetUInt32Value(PLAYER_FIELD_VIRTUAL_PLAYER_REALM, realmID);
 
     // set which actionbars the client has active - DO NOT REMOVE EVER AGAIN (can be changed though, if it does change fieldwise)
     SetByteValue(PLAYER_FIELD_LIFETIME_MAX_RANK, 2, fields[58].GetUInt8());
@@ -23458,8 +23462,25 @@ void Player::SendComboPoints()
         }
         else
             data.Initialize(SMSG_UPDATE_COMBO_POINTS, combotarget->GetPackGUID().size()+1);
-        data.append(combotarget->GetPackGUID());
+        ObjectGuid guid = combotarget->GetGUID();
+        data.WriteBit(guid[0]);
+        data.WriteBit(guid[2]);
+        data.WriteBit(guid[7]);
+        data.WriteBit(guid[5]);
+        data.WriteBit(guid[6]);
+        data.WriteBit(guid[3]);
+        data.WriteBit(guid[4]);
+        data.WriteBit(guid[1]);
+        data.FlushBits();
+        data.WriteByteSeq(guid[0]);
+        data.WriteByteSeq(guid[6]);
         data << uint8(m_comboPoints);
+        data.WriteByteSeq(guid[3]);
+        data.WriteByteSeq(guid[4]);
+        data.WriteByteSeq(guid[1]);
+        data.WriteByteSeq(guid[5]);
+        data.WriteByteSeq(guid[7]);
+        data.WriteByteSeq(guid[2]);
         GetSession()->SendPacket(&data);
     }
 }
@@ -26636,30 +26657,30 @@ void Player::SendClearAllCooldowns(Unit* target)
     uint32 spellCount = m_spellCooldowns.size();
     ObjectGuid guid = target ? target->GetGUID() : 0;
 
-    WorldPacket data(SMSG_CLEAR_COOLDOWNS, 4+8);
-    data.WriteBit(guid[1]);
-    data.WriteBit(guid[3]);
+    WorldPacket data(SMSG_CLEAR_COOLDOWNS, 4+8+1+spellCount*4);
     data.WriteBit(guid[6]);
-    data.WriteBits(spellCount, 24); // Spell Count
-    data.WriteBit(guid[7]);
-    data.WriteBit(guid[5]);
-    data.WriteBit(guid[2]);
     data.WriteBit(guid[4]);
+    data.WriteBits(spellCount, 22); // Spell Count
+    data.WriteBit(guid[5]);
     data.WriteBit(guid[0]);
+    data.WriteBit(guid[3]);
+    data.WriteBit(guid[2]);
+    data.WriteBit(guid[7]);
+    data.WriteBit(guid[1]);
 
     data.FlushBits();
 
-    data.WriteByteSeq(guid[7]);
-    data.WriteByteSeq(guid[2]);
+    data.WriteByteSeq(guid[3]);
+    data.WriteByteSeq(guid[0]);
+    data.WriteByteSeq(guid[1]);
     data.WriteByteSeq(guid[4]);
     data.WriteByteSeq(guid[5]);
-    data.WriteByteSeq(guid[1]);
-    data.WriteByteSeq(guid[3]);
     for (SpellCooldowns::const_iterator itr = m_spellCooldowns.begin(); itr != m_spellCooldowns.end(); ++itr)
         data << uint32(itr->first); // Spell ID
 
-    data.WriteByteSeq(guid[0]);
     data.WriteByteSeq(guid[6]);
+    data.WriteByteSeq(guid[7]);
+    data.WriteByteSeq(guid[2]);
 
     SendDirectMessage(&data);
 }
